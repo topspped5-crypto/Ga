@@ -41,7 +41,29 @@ body.open .drawer{transform:none;box-shadow:0 0 60px #7c5cff30}
 .pagehead h1{margin:0;font-size:25px;letter-spacing:-.3px}
 @media(min-width:980px){.menu-btn,.overlay,.topbar{display:none}.drawer{transform:none}main.page{margin-left:272px;max-width:none;padding:34px 44px 80px}main.page>*{max-width:1080px}}
 .card{background:linear-gradient(180deg,#131626cc,#0d1018);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 10px 40px #00000040;margin-bottom:18px}
-.auth{max-width:430px;margin:5vh auto}
+
+.auth-shell{min-height:100svh;display:grid;place-items:center;padding:28px 16px;position:relative;overflow:hidden}
+.auth-shell:before,.auth-shell:after{content:"";position:absolute;width:360px;height:360px;border-radius:50%;filter:blur(75px);opacity:.22;pointer-events:none}
+.auth-shell:before{background:#7655ff;top:-170px;left:-130px}.auth-shell:after{background:#06b6d4;right:-160px;bottom:-190px}
+.auth{width:100%;max-width:470px;margin:0 auto;position:relative;z-index:1;padding:clamp(22px,5vw,36px);background:linear-gradient(155deg,#151a2bfa,#0b0e17fa);border:1px solid #303653;border-radius:24px;box-shadow:0 28px 90px #0009}
+.auth-brand{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:30px}
+.auth-brand .mark{width:44px;height:44px;border-radius:14px}
+.auth-brand .logo{font-size:25px}
+.auth-kicker{font-size:11px;letter-spacing:1.8px;text-transform:uppercase;color:#8d9ab9;font-weight:800;margin-bottom:9px}
+.auth h1{font-size:clamp(25px,6vw,30px);line-height:1.2;margin:0 0 9px;letter-spacing:-.8px}
+.auth-sub{color:#9ba4bd;font-size:13.5px;margin:0 0 23px;line-height:1.65}
+.auth label{margin:16px 0 7px;color:#b6bfd5;font-size:11px}
+.auth input{min-height:49px;background:#090c15;border-color:#303956;border-radius:13px}
+.auth input::placeholder{color:#626d88}
+.auth .btn.full{min-height:51px;margin-top:24px;border-radius:13px;font-size:15px;background:linear-gradient(105deg,#7657f6,#397fe8);box-shadow:0 10px 28px #644de944}
+.auth-foot{border-top:1px solid #252c40;margin-top:24px;padding-top:20px;text-align:center;color:#929bb2;font-size:13px}
+.auth-foot a{color:#a99aff;font-weight:800}
+.auth-trust{display:flex;justify-content:center;gap:8px;align-items:center;color:#7f8ba6;font-size:11px;margin-top:20px}
+.auth-trust span{color:#35d69a}
+.auth .flash{margin:0 0 14px}
+.auth .pw input{padding-right:72px}
+@media(max-width:420px){.auth-shell{padding:18px 13px}.auth{border-radius:20px}.auth-brand{margin-bottom:25px}}
+
 .glow{position:relative}.glow:before{content:"";position:absolute;inset:-1px;border-radius:19px;padding:1px;background:linear-gradient(135deg,#7c5cff88,transparent 40%,#22d3ee66);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
 h1,h2,h3{margin:0 0 14px;letter-spacing:-.2px}h2{font-size:18px}h3{font-size:16px}
 label{display:block;font-size:12px;font-weight:600;color:var(--mut);margin:14px 0 6px;letter-spacing:.3px;text-transform:uppercase}
@@ -148,30 +170,56 @@ def page(layout, active, title, content):
 
 _PWJS = """<script>function sp(b){var i=document.getElementById('pw');var s=i.type=='password';i.type=s?'text':'password';b.textContent=s?'Hide':'Show'}</script>"""
 
-AUTH = """{% extends 'base.html' %}{% block title %}{{ 'Sign up' if mode=='signup' else 'Login' }} · Pay Gateway{% endblock %}
-{% block body %}<div class="page"><div class="auth card glow">
-<div class="center" style="margin-bottom:24px"><div class="brand c">""" + MARK + """<span class="logo" style="font-size:26px">Pay Gateway</span></div>
-<div class="mut" style="margin-top:10px">Accept UPI payments with automatic verification</div></div>
-<h1 style="font-size:22px;margin-bottom:4px">{{ 'Create your account' if mode=='signup' else 'Welcome back' }}</h1>
-<p class="mut" style="margin:0 0 14px">{{ 'It takes less than a minute.' if mode=='signup' else 'Login to manage your gateways and orders.' }}</p>""" + FLASH + """
-<form method="post"><input type="hidden" name="csrf" value="{{csrf}}">
-<label>Username</label><input name="username" required maxlength="30" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
-{% if mode=='signup' %}
-<label>Phone number</label><input name="phone" required inputmode="numeric" pattern="[0-9+ ]{10,15}" placeholder="10 digit mobile number">
-<label>Gmail</label><input name="email" type="email" required placeholder="you@gmail.com">
-{% endif %}
-<label>Password</label><div class="pw"><input id="pw" name="password" type="password" required autocomplete="{{ 'new-password' if mode=='signup' else 'current-password' }}" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="button" class="eye" onclick="sp(this)">Show</button></div>
-<button class="btn full">{{ 'Create account' if mode=='signup' else 'Login' }}</button></form>
-<p class="center mut" style="margin:18px 0 0">
-{% if mode=='signup' %}Already have an account? <a href="/login"><b>Login</b></a>{% else %}New here? <a href="/signup"><b>Create account</b></a>{% endif %}</p>
-</div></div>""" + _PWJS + """{% endblock %}"""
+AUTH = """{% extends 'base.html' %}{% block title %}{{ 'Create account' if mode=='signup' else 'Login' }} · Pay Gateway{% endblock %}
+{% block body %}
+<main class="auth-shell">
+<section class="auth glow">
+  <div class="auth-brand">""" + MARK + """<span class="logo">Pay Gateway</span></div>
+  <div class="auth-kicker">{{ 'Merchant registration' if mode=='signup' else 'Merchant portal' }}</div>
+  <h1>{{ 'Create your account' if mode=='signup' else 'Welcome back' }}</h1>
+  <p class="auth-sub">{{ 'Set up your merchant workspace and start managing payments securely.' if mode=='signup' else 'Sign in to manage your gateways, transactions and API settings.' }}</p>
+  """ + FLASH + """
+  <form method="post" action="{{ '/signup' if mode=='signup' else '/login' }}" autocomplete="on">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" required minlength="3" maxlength="30"
+      placeholder="Enter your username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
+    {% if mode=='signup' %}
+      <label for="phone">Phone number</label>
+      <input id="phone" name="phone" type="tel" required inputmode="tel" maxlength="15"
+        pattern="[0-9+ ]{10,15}" placeholder="Your mobile number" autocomplete="tel">
+      <label for="email">Gmail address</label>
+      <input id="email" name="email" type="email" required maxlength="254"
+        placeholder="you@gmail.com" autocomplete="email" autocapitalize="off">
+    {% endif %}
+    <label for="pw">Password</label>
+    <div class="pw"><input id="pw" name="password" type="password" required minlength="6"
+      placeholder="{{ 'Create a password (6+ characters)' if mode=='signup' else 'Enter your password' }}"
+      autocomplete="{{ 'new-password' if mode=='signup' else 'current-password' }}">
+      <button type="button" class="eye" onclick="sp(this)" aria-label="Show or hide password">Show</button></div>
+    <button class="btn full" type="submit">{{ 'Create account' if mode=='signup' else 'Sign in securely' }} <span aria-hidden="true">→</span></button>
+  </form>
+  <div class="auth-foot">
+    {% if mode=='signup' %}Already have an account? <a href="/login">Sign in</a>{% else %}New to Pay Gateway? <a href="/signup">Create an account</a>{% endif %}
+  </div>
+  <div class="auth-trust"><span>●</span> Secure session · Protected merchant access</div>
+</section>
+</main>
+""" + _PWJS + """{% endblock %}"""
 
-ADMIN_LOGIN = """{% extends 'base.html' %}{% block title %}Admin · Pay Gateway{% endblock %}
-{% block body %}<div class="page"><div class="auth card glow"><div class="center" style="margin-bottom:20px"><div class="brand c">""" + MARK + """<span class="logo" style="font-size:24px">Admin</span></div></div>""" + FLASH + """
-<form method="post"><input type="hidden" name="csrf" value="{{csrf}}">
-<label>Admin username</label><input name="username" required autocapitalize="off" autocorrect="off">
-<label>Password</label><div class="pw"><input id="pw" name="password" type="password" required autocapitalize="off"><button type="button" class="eye" onclick="sp(this)">Show</button></div>
-<button class="btn full">Login</button></form></div></div>""" + _PWJS + """{% endblock %}"""
+ADMIN_LOGIN = """{% extends 'base.html' %}{% block title %}Administrator Login · Pay Gateway{% endblock %}
+{% block body %}<main class="auth-shell"><section class="auth glow">
+<div class="auth-brand">""" + MARK + """<span class="logo">Pay Gateway</span></div>
+<div class="auth-kicker">Restricted area</div><h1>Administrator sign in</h1>
+<p class="auth-sub">Sign in with your administrator credentials to access gateway controls and platform settings.</p>
+""" + FLASH + """
+<form method="post" action="/admin/login" autocomplete="on"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="admin-user">Admin username</label><input id="admin-user" name="username" required autocomplete="username" autocapitalize="off" placeholder="Administrator username">
+<label for="pw">Password</label><div class="pw"><input id="pw" name="password" type="password" required autocomplete="current-password" placeholder="Enter admin password"><button type="button" class="eye" onclick="sp(this)">Show</button></div>
+<button class="btn full" type="submit">Access admin panel →</button></form>
+<div class="auth-foot"><a href="/login">← Back to merchant login</a></div>
+<div class="auth-trust"><span>●</span> Authorized administrators only</div>
+</section></main>""" + _PWJS + """{% endblock %}"""
 
 def stat(label, val, icon="chart"):
     return ('<div class="card stat"><div class="si">{{ ico(\'%s\') }}</div><div><span>%s</span><b>%s</b></div></div>' % (icon, label, val))
@@ -375,7 +423,16 @@ ADMIN_SET = page('layout_admin.html', 'set', 'Settings', """
 <form method="post" action="/admin/restore" enctype="multipart/form-data" class="row" style="margin-top:16px"><input type="hidden" name="csrf" value="{{csrf}}">
 <input type="file" name="file" required><button class="btn gray" style="flex:0">Restore</button></form></div>""")
 
+ERROR_PAGE = """{% extends 'base.html' %}{% block title %}Temporary error · Pay Gateway{% endblock %}
+{% block body %}<main class="auth-shell"><section class="auth glow center">
+<div class="auth-brand">""" + MARK + """<span class="logo">Pay Gateway</span></div>
+<div class="big" style="font-size:42px;margin:8px 0 18px">500</div><h1>Something went wrong</h1>
+<p class="auth-sub">The server could not complete this request. Your account data has not been intentionally changed. Please try again in a moment.</p>
+<a class="btn full" href="/login">Return to login</a><div class="auth-foot">If this keeps happening, contact the site administrator.</div>
+</section></main>{% endblock %}"""
+
+
 TEMPLATES = {"base.html": BASE, "icons.html": ICONS, "layout_user.html": LAYOUT_USER, "layout_admin.html": LAYOUT_ADMIN,
-  "auth.html": AUTH, "admin_login.html": ADMIN_LOGIN, "dash.html": DASH, "gateways.html": GATEWAYS, "gateway_new.html": GATEWAY_NEW,
+  "auth.html": AUTH, "admin_login.html": ADMIN_LOGIN, "error.html": ERROR_PAGE, "dash.html": DASH, "gateways.html": GATEWAYS, "gateway_new.html": GATEWAY_NEW,
   "gateway.html": GATEWAY, "orders.html": ORDERS, "docs.html": DOCS, "account.html": ACCOUNT, "checkout.html": CHECKOUT,
   "admin_home.html": ADMIN_HOME, "admin_users.html": ADMIN_USERS, "admin_gw.html": ADMIN_GW, "admin_set.html": ADMIN_SET}

@@ -11,7 +11,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from core import (dec, DATA_DIR, DB_PATH, SECRET, conn, init_db, get_setting, set_setting, enc, DEFAULTS, ist, money)
 from templates_gw import TEMPLATES_GW
 import fampay, payments, paytm, worker, backup
-import json, threading
+import json, threading, logging
 from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 from flask import jsonify
@@ -64,6 +64,11 @@ def headers(r):
     r.headers["X-Content-Type-Options"] = "nosniff"
     if r.mimetype == "text/html": r.headers["Cache-Control"] = "no-store"
     return r
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    app.logger.exception("Unhandled server error", exc_info=error)
+    return render_template("error.html"), 500
 
 _attempts = {}
 def throttled(key, limit=8, window=300):
@@ -120,7 +125,16 @@ def signup():
                 session.clear(); session["uid"] = cur.lastrowid; session["csrf"] = secrets.token_hex(16)
                 flash("Welcome! Your account is ready.", "ok"); return redirect("/dashboard")
             except sqlite3.IntegrityError:
-                flash("Username already taken.", "err")
+                db().rollback()
+                flash("That username is already in use. Please choose another.", "err")
+            except sqlite3.Error:
+                db().rollback()
+                app.logger.exception("Database error during account registration")
+                flash("We could not create your account right now. Please try again shortly.", "err")
+            except Exception:
+                db().rollback()
+                app.logger.exception("Unexpected error during account registration")
+                flash("Account creation failed unexpectedly. Please try again or contact the administrator.", "err")
     return render_template("auth.html", mode="signup", csrf=session["csrf"])
 
 @app.route("/login", methods=["GET", "POST"])
@@ -192,7 +206,11 @@ def admin_login():
         k = "a:" + ip()
         if throttled(k, 5): flash("Too many attempts. Wait a few minutes.", "err")
         elif is_admin_cred(request.form.get("username"), request.form.get("password")):
-            session["admin"] = True; return redirect("/admin")
+            session.clear()
+            session["admin"] = True
+            session["csrf"] = secrets.token_hex(16)
+            _attempts.pop(k, None)
+            return redirect("/admin")
         else:
             fail(k); flash("Wrong admin credentials.", "err")
     return render_template("admin_login.html", csrf=session["csrf"])

@@ -1,0 +1,16 @@
+PAY GATEWAY - AUTHENTICATION UPDATE
+
+Changes:
+- Rebuilt merchant Login and Create Account screens with responsive professional styling.
+- Rebuilt the Admin Login screen to match the new authentication design.
+- Kept existing dashboard, gateways, payments, API, database schema, and other features unchanged.
+- Added safer account-registration error handling with server-side logging.
+- Admin login now clears the previous user session and creates a fresh CSRF token.
+- Added a branded fallback page for uncaught HTTP 500 errors.
+
+Important:
+The screenshot only shows a generic HTTP 500 response. The exact original server exception cannot be identified from that screenshot alone.
+After deploying, if account creation still fails, open Render -> your service -> Logs and check the traceback at the time of the failed request. The server log is required to identify any remaining deployment/database-specific cause.
+
+Validation:
+Python syntax compilation passed for the edited Python files. A full Flask request test could not be run in this environment because Flask is not installed here.
