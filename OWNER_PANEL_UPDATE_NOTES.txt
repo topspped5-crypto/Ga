@@ -1,0 +1,28 @@
+SINGLE OWNER PANEL UPDATE
+=========================
+
+- Consolidated the separate merchant/user and administrator navigation into one Owner Dashboard.
+- The only interactive sign-in is /login. /signup redirects to /login and /admin/login redirects to /login.
+- After signing in with the existing administrator credentials, the owner can access Dashboard, Gateway Setup, Gateway Management, Add Gateway, Payments & Orders, API Documentation, Settings & Backup.
+- Existing user-facing gateway, order, API and checkout routes are protected by the same owner session and operate over all existing gateways/orders.
+- Existing API endpoints (/api/v1/orders and /api/v1/orders/<order_id>) are retained.
+- Removed the external Google Fonts dependency and stopped issuing SQLite journal_mode=WAL on every connection; WAL is enabled at DB initialization. Added indexes for common order/gateway lookups.
+- FamPay, Paytm, payments, worker and core payment verification modules were not edited as part of the owner-panel work, except core.py database connection/index initialization for performance.
+
+LOGIN
+-----
+The existing administrator credentials remain accepted. Default credentials in the supplied source are:
+  Username: rgcheat
+  Password: 909090
+For a deployed site, set ADMIN_USERNAME and ADMIN_PASSWORD environment variables and use a strong password. Do not publish or share these credentials.
+
+DEPLOY
+------
+1. Keep a copy of your current database and deployment files.
+2. Replace the app files with this ZIP, preserving the persistent DATA_DIR/database.
+3. Install requirements.txt and deploy with the existing Render/start command.
+4. Open /login and sign in. There is no separate user signup or admin login.
+
+VALIDATION
+----------
+Python syntax compilation completed successfully. Flask runtime tests could not be run in this build environment because Flask is not installed and package-network access is unavailable. Test on a staging deployment before switching live payments.

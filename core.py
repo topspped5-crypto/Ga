@@ -30,11 +30,13 @@ DEFAULTS = {"fampay_sender": "famapp.in", "fampay_keywords": "received,credited"
 def conn():
     c = sqlite3.connect(DB_PATH, timeout=20)
     c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA synchronous=NORMAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    c.execute("PRAGMA synchronous=NORMAL")
     return c
 
 def init_db():
     c = conn()
+    c.execute("PRAGMA journal_mode=WAL")
     c.executescript("""
     CREATE TABLE IF NOT EXISTS users(
         id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL COLLATE NOCASE,
@@ -51,6 +53,9 @@ def init_db():
         redirect_url TEXT, status TEXT NOT NULL, created_ts REAL NOT NULL, expires_ts REAL NOT NULL,
         paid_ts REAL, utr TEXT, webhook_status TEXT);
     CREATE INDEX IF NOT EXISTS ix_orders_gw ON orders(gateway_id, status);
+    CREATE INDEX IF NOT EXISTS ix_orders_created ON orders(created_ts DESC);
+    CREATE INDEX IF NOT EXISTS ix_orders_user_created ON orders(user_id, created_ts DESC);
+    CREATE INDEX IF NOT EXISTS ix_gateways_user ON gateways(user_id, id DESC);
     CREATE TABLE IF NOT EXISTS seen_mail(gateway_id INTEGER, msgid TEXT, PRIMARY KEY(gateway_id,msgid));
     CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
     """)
