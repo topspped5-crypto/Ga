@@ -292,22 +292,37 @@ ORDERS = page('layout_user.html', 'orders', 'Orders', """
 
 DOCS = page('layout_user.html', 'docs', 'API docs', """
 <div class="pagehead"><h1>API docs</h1></div><div class="card">
-<p class="mut">Base URL: <b>{{base}}</b> &nbsp; Auth: header <code>X-API-Key: YOUR_GATEWAY_KEY</code></p>
-<h3>1. Create order</h3>
-<pre>POST {{base}}/api/v1/orders
+<p class="mut">Base URL: <b>{{base}}</b> &nbsp; Auth: <code>X-API-Key: YOUR_GATEWAY_KEY</code> or <code>Authorization: Bearer YOUR_GATEWAY_KEY</code>. Keep keys on your server only.</p>
+<h3>1. Create payment (compatible API)</h3>
+<pre>POST {{base}}/api/v1/payment/create
 Content-Type: application/json
+X-API-Key: YOUR_GATEWAY_KEY
 
-{"amount": 100, "ref": "your-order-id",
- "webhook_url": "https://yoursite.com/hook",
- "redirect_url": "https://yoursite.com/thanks",
- "cancel_url": "https://yoursite.com/cart"}</pre>
-<p class="mut">Only <code>amount</code> is required. Response:</p>
-<pre>{"order_id":"...","payment_url":"{{base}}/pay/...","amount":"100.00","expires_in":300}</pre>
-<p class="mut">Send the user to <code>payment_url</code>. Orders expire in 5 minutes. For FamPay the amount can be a few paise higher so each pending payment is unique; use the returned <code>amount</code>. The Back button on the payment page goes to <code>cancel_url</code> (or <code>redirect_url</code>).</p>
+{"amount":99,"order_id":"ORDER10001","gateway":"paytm"}</pre>
+<p class="mut">Use <code>"gateway":"paytm"</code> or <code>"gateway":"fampay"</code> explicitly. The key must belong to an active gateway of that type. Amount is INR 1–100000. Repeating the same order_id for the same gateway returns the original payment.</p>
+<pre>{"success":true,"order_id":"ORDER10001","pay_id":"...","status":"PENDING",
+ "amount":99.0,"currency":"INR","gateway":"paytm","transaction_id":"",
+ "payment_url":"{{base}}/pay/...","qr_url":"{{base}}/pay/.../qr.svg",
+ "qr_png_url":"{{base}}/pay/.../qr.png","upi_uri":"upi://pay?...",
+ "expires_at":"...","webhook_secret":"..."}</pre>
+<p class="mut">For FamPay, the returned amount may include a unique paise adjustment. The customer must pay the exact returned amount. Use <code>qr_png_url</code> for bots and <code>qr_url</code> for websites.</p>
 <h3>2. Check status</h3>
-<pre>GET {{base}}/api/v1/orders/ORDER_ID   →  {"status":"pending|paid|expired", ...}</pre>
-<h3>3. Webhook</h3>
-<p class="mut">When paid, we POST JSON <code>{event, order_id, ref, amount, status, utr, paid_at}</code> to your webhook_url with header <code>X-Signature</code> = HMAC-SHA256 of the raw body using your API key. Always verify it, and confirm the order with the status API.</p></div>""")
+<pre>GET {{base}}/api/v1/payment/status/ORDER10001
+X-API-Key: YOUR_GATEWAY_KEY</pre>
+<h3>3. Verify payment</h3>
+<pre>POST {{base}}/api/v1/payment/verify
+Content-Type: application/json
+X-API-Key: YOUR_GATEWAY_KEY
+
+{"order_id":"ORDER10001"}</pre>
+<p class="mut">Only <code>SUCCESS</code> means paid. Deliver the product only after SUCCESS and amount verification. Never trust redirects, screenshots or a user-entered UTR.</p>
+<h3>4. Webhook</h3>
+<p class="mut">Pass <code>webhook_url</code> in the create-payment JSON to receive events. Verify <code>X-Payment-Gateway-Timestamp</code> and <code>X-Payment-Gateway-Signature</code>. Signature is <code>sha256=HMAC_SHA256(webhook_secret, timestamp + "." + rawBody)</code>. Reject timestamps older than 5 minutes, compare in constant time, and deduplicate by event_id.</p>
+<h3>5. Legacy GET compatibility</h3>
+<pre>GET {{base}}/api/create_order.php?amount=99&amp;order_id=ORDER10001&amp;gateway=paytm&amp;api_key=YOUR_GATEWAY_KEY
+GET {{base}}/api/verify.php?order_id=ORDER10001&amp;api_key=YOUR_GATEWAY_KEY</pre>
+<p class="mut">The existing <code>/api/v1/orders</code> endpoints remain available for older integrations. Paytm and FamPay payment verification logic has not been changed by this API adapter.</p>
+</div>""")
 
 ACCOUNT = page('layout_user.html', 'account', 'Account', """
 <div class="pagehead"><h1>Account</h1></div>

@@ -18,19 +18,32 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _send(oid):
     c = conn()
-    o = c.execute("SELECT o.*, g.api_key FROM orders o JOIN gateways g ON g.id=o.gateway_id WHERE o.id=?", (oid,)).fetchone()
+    o = c.execute("SELECT o.*, g.api_key, g.webhook_secret FROM orders o JOIN gateways g ON g.id=o.gateway_id WHERE o.id=?", (oid,)).fetchone()
     if not o or not o["webhook_url"]: c.close(); return
-    body = json.dumps({"event": "payment.success", "order_id": o["id"], "ref": o["ref"],
-                       "amount": f"{o['amount']/100:.2f}", "status": "paid", "utr": o["utr"],
-                       "paid_at": int(o["paid_ts"] or time.time())}).encode()
-    sig = hmac.new(o["api_key"].encode(), body, hashlib.sha256).hexdigest()
+    if o["api_v1"]:
+        ts = str(int(time.time()))
+        event = "payment.success" if o["status"] == "paid" else "payment.failed"
+        payload = {"event": event, "event_id": f"{o['id']}:{event}",
+                   "order_id": o["client_order_id"] or o["id"], "pay_id": o["pt_order"] or o["id"],
+                   "transaction_id": o["utr"] or "", "amount": float(o["amount"] / 100),
+                   "currency": "INR", "status": "SUCCESS" if o["status"] == "paid" else o["status"].upper(),
+                   "gateway": "paytm" if o["pt_order"] else "fampay"}
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        sig = "sha256=" + hmac.new((o["webhook_secret"] or o["api_key"]).encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
+        headers = {"Content-Type": "application/json", "User-Agent": "PayGateway/1",
+                   "X-Payment-Gateway-Timestamp": ts, "X-Payment-Gateway-Signature": sig}
+    else:
+        body = json.dumps({"event": "payment.success", "order_id": o["id"], "ref": o["ref"],
+                           "amount": f"{o['amount']/100:.2f}", "status": "paid", "utr": o["utr"],
+                           "paid_at": int(o["paid_ts"] or time.time())}).encode()
+        sig = hmac.new(o["api_key"].encode(), body, hashlib.sha256).hexdigest()
+        headers = {"Content-Type": "application/json", "X-Signature": sig, "User-Agent": "PayGateway/1"}
     status = "failed"
     for wait in (0, 2, 6, 15):
         time.sleep(wait)
         try:
             if not safe_url(o["webhook_url"]): status = "blocked"; break
-            req = urllib.request.Request(o["webhook_url"], data=body, headers={
-                "Content-Type": "application/json", "X-Signature": sig, "User-Agent": "PayGateway/1"})
+            req = urllib.request.Request(o["webhook_url"], data=body, headers=headers)
             with urllib.request.build_opener(_NoRedirect).open(req, timeout=10) as r:
                 if 200 <= r.status < 300: status = "sent"; break
         except Exception:

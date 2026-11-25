@@ -11,10 +11,10 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from core import (dec, DATA_DIR, DB_PATH, SECRET, conn, init_db, get_setting, set_setting, enc, DEFAULTS, ist, money)
 from templates_gw import TEMPLATES_GW
 import fampay, payments, paytm, worker, backup
-import json, threading, logging
+import json, threading, logging, urllib.request, urllib.error, io
 from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
-from flask import jsonify
+from flask import jsonify, Response
 
 ADMIN_ACCOUNTS = [("rgcheat", "909090")]
 if os.environ.get("ADMIN_USERNAME") and os.environ.get("ADMIN_PASSWORD"):
@@ -280,8 +280,8 @@ def gateway_add():
     else: err = "Unknown gateway type."
     if err:
         flash(err, "err"); return redirect("/gateway/new")
-    cur = db().execute("INSERT INTO gateways(user_id,type,name,upi_id,gmail,app_pw_enc,mid,key_enc,api_key,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
-        (g.user["id"], typ, name, upi, vals["gmail"], vals["pw"], vals["mid"], vals["key"], "gw_" + secrets.token_urlsafe(24), time.time()))
+    cur = db().execute("INSERT INTO gateways(user_id,type,name,upi_id,gmail,app_pw_enc,mid,key_enc,api_key,webhook_secret,created) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (g.user["id"], typ, name, upi, vals["gmail"], vals["pw"], vals["mid"], vals["key"], "gw_" + secrets.token_urlsafe(24), secrets.token_urlsafe(32), time.time()))
     db().commit(); flash("Gateway created and verified.", "ok")
     return redirect(f"/gateway/{cur.lastrowid}")
 
@@ -339,11 +339,144 @@ def make_order(gw, amount, ref, webhook, redirect_url, cancel_url=None):
     worker.nudge()
     return oid, None
 
-def api_gateway():
-    key = request.headers.get("X-API-Key") or request.values.get("api_key") or (request.get_json(silent=True) or {}).get("api_key", "")
-    gw = db().execute("""SELECT g.* FROM gateways g JOIN users u ON u.id=g.user_id
-                         WHERE g.api_key=? AND g.active=1 AND u.banned=0""", (key,)).fetchone() if key else None
-    return gw
+def api_gateway(gateway_type=None):
+    data = request.get_json(silent=True) or {}
+    auth = request.headers.get("Authorization", "")
+    bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    key = request.headers.get("X-API-Key") or bearer or request.values.get("api_key") or data.get("api_key", "")
+    sql = "SELECT g.* FROM gateways g JOIN users u ON u.id=g.user_id WHERE g.api_key=? AND g.active=1 AND u.banned=0"
+    args = [key]
+    if gateway_type in ("paytm", "fampay"):
+        sql += " AND g.type=?"; args.append(gateway_type)
+    return db().execute(sql, args).fetchone() if key else None
+
+
+def _api_error(message, status):
+    return jsonify(success=False, error=message), status
+
+
+def _api_qr(oid, png=True):
+    o = db().execute("SELECT o.*,g.name,g.upi_id FROM orders o JOIN gateways g ON g.id=o.gateway_id WHERE o.id=?", (oid,)).fetchone()
+    if not o: abort(404)
+    upi = o["qr_data"] or f"upi://pay?pa={quote(o['upi_id'])}&pn={quote(o['name'])}&am={money(o['amount'])}&cu=INR&tn={quote('Order '+oid[:8])}"
+    try:
+        import qrcode
+        if png:
+            img = qrcode.make(upi); b = io.BytesIO(); img.save(b, format="PNG")
+            return Response(b.getvalue(), mimetype="image/png", headers={"Cache-Control":"no-store"})
+        import qrcode.image.svg
+        img = qrcode.make(upi, image_factory=qrcode.image.svg.SvgPathImage)
+        b = io.BytesIO(); img.save(b)
+        return Response(b.getvalue(), mimetype="image/svg+xml", headers={"Cache-Control":"no-store"})
+    except Exception:
+        return jsonify(success=False, error="QR image support unavailable; use upi_uri"), 503
+
+
+@app.route("/api/v1/payment/create", methods=["POST"])
+def api_v1_payment_create():
+    d = request.get_json(silent=True) or request.form
+    gateway_type = str(d.get("gateway", "")).strip().lower()
+    if gateway_type not in ("paytm", "fampay"):
+        return _api_error("gateway must be paytm or fampay", 400)
+    gw = api_gateway(gateway_type)
+    if not gw: return _api_error("invalid API key, inactive gateway, or gateway not configured", 401)
+    if throttled("apiv1:%s" % gw["id"], 60, 60): return _api_error("rate limit (60/min)", 429)
+    fail("apiv1:%s" % gw["id"])
+    try: amount = Decimal(str(d.get("amount", ""))).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError): return _api_error("invalid amount", 400)
+    if not (Decimal("1") <= amount <= Decimal("100000")): return _api_error("amount must be 1 to 100000", 400)
+    client_oid = str(d.get("order_id") or "").strip()[:100]
+    if client_oid and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", client_oid): return _api_error("invalid order_id", 400)
+    # Idempotency: retrying the same merchant order_id returns the original payment.
+    if client_oid:
+        old = db().execute("SELECT id FROM orders WHERE gateway_id=? AND client_order_id=?", (gw["id"], client_oid)).fetchone()
+        if old:
+            o = db().execute("SELECT * FROM orders WHERE id=?", (old["id"],)).fetchone()
+            if o:
+                return _api_payment_payload(o, gw, client_oid)
+    wh = (d.get("webhook_url") or "").strip() or None
+    if wh and not payments.safe_url(wh): return _api_error("webhook_url must be a public http(s) URL", 400)
+    oid, err = make_order(gw, amount, client_oid or None, wh, None)
+    if err: return _api_error(err, 502 if str(err).lower().startswith("paytm") else 429)
+    db().execute("UPDATE orders SET api_v1=1, client_order_id=? WHERE id=?", (client_oid or oid, oid)); db().commit()
+    o = db().execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+    return _api_payment_payload(o, gw, client_oid or oid)
+
+
+def _api_payment_payload(o, gw, client_oid):
+    oid = o["id"]
+    upi = o["qr_data"] or f"upi://pay?pa={quote(gw['upi_id'])}&pn={quote(gw['name'])}&am={money(o['amount'])}&cu=INR&tr={quote(o['pt_order'] or oid)}&tn={quote('Order '+str(client_oid))}"
+    root = base_url()
+    payid = o["pt_order"] or oid
+    return jsonify(success=True, order_id=client_oid, pay_id=payid,
+        status="SUCCESS" if o["status"] == "paid" else o["status"].upper(), amount=float(Decimal(o["amount"])/100), currency="INR",
+        gateway=gw["type"], transaction_id=o["utr"] or "", payment_url=f"{root}/pay/{oid}",
+        qr_url=f"{root}/pay/{oid}/qr.svg", qr_png_url=f"{root}/pay/{oid}/qr.png", upi_uri=upi,
+        expires_at=datetime.fromtimestamp(o["expires_ts"], timezone.utc).isoformat().replace("+00:00", "Z"), webhook_secret=gw["webhook_secret"])
+
+
+@app.route("/api/v1/payment/status/<order_id>", methods=["GET"])
+def api_v1_payment_status(order_id):
+    gw = api_gateway()
+    if not gw: return _api_error("invalid API key", 401)
+    o = db().execute("SELECT * FROM orders WHERE gateway_id=? AND (id=? OR client_order_id=? OR pt_order=?) ORDER BY created_ts DESC LIMIT 1", (gw["id"], order_id, order_id, order_id)).fetchone()
+    if not o: return _api_error("order not found", 404)
+    st = "EXPIRED" if o["status"] == "pending" and o["expires_ts"] < time.time() else ("SUCCESS" if o["status"] == "paid" else o["status"].upper())
+    return jsonify(success=True, order_id=o["client_order_id"] or o["id"], pay_id=o["pt_order"] or o["id"], status=st,
+                   amount=float(Decimal(o["amount"])/100), currency="INR", transaction_id=o["utr"] or "")
+
+
+@app.route("/api/v1/payment/verify", methods=["POST"])
+def api_v1_payment_verify():
+    d = request.get_json(silent=True) or request.form
+    oid = str(d.get("order_id") or "").strip()
+    gw = api_gateway()
+    if not gw: return _api_error("invalid API key", 401)
+    o = db().execute("SELECT * FROM orders WHERE gateway_id=? AND (id=? OR client_order_id=? OR pt_order=?) ORDER BY created_ts DESC LIMIT 1", (gw["id"], oid, oid, oid)).fetchone()
+    if not o: return _api_error("order not found", 404)
+    st = "EXPIRED" if o["status"] == "pending" and o["expires_ts"] < time.time() else ("SUCCESS" if o["status"] == "paid" else o["status"].upper())
+    if st == "PENDING": worker.nudge()
+    return jsonify(success=(st == "SUCCESS"), data=({"order_id":o["client_order_id"] or o["id"], "amount":float(Decimal(o["amount"])/100), "utr":o["utr"], "payment_time":datetime.fromtimestamp(o["paid_ts"], timezone.utc).isoformat() if o["paid_ts"] else None} if st == "SUCCESS" else None), status=st)
+
+
+@app.route("/api/create_order.php", methods=["GET"])
+def api_legacy_create():
+    # Legacy GET adapter. API keys remain server-side; POST JSON is preferred.
+    d = request.args
+    gt = str(d.get("gateway", "")).strip().lower()
+    if gt not in ("paytm", "fampay"): return _api_error("gateway must be paytm or fampay", 400)
+    gw = api_gateway(gt)
+    if not gw: return _api_error("invalid API key or gateway", 401)
+    try: amount = Decimal(str(d.get("amount", ""))).quantize(Decimal("0.01"))
+    except Exception: return _api_error("invalid amount", 400)
+    if not (Decimal("1") <= amount <= Decimal("100000")): return _api_error("amount must be 1 to 100000", 400)
+    oid = d.get("order_id", "").strip()[:100]
+    if oid:
+        old = db().execute("SELECT id FROM orders WHERE gateway_id=? AND client_order_id=?", (gw["id"], oid)).fetchone()
+        if old:
+            o=db().execute("SELECT * FROM orders WHERE id=?", (old["id"],)).fetchone()
+            return jsonify(status="success", data=_api_payment_payload(o,gw,oid).json)
+    new_id, err = make_order(gw, amount, oid or None, None, None)
+    if err: return _api_error(err, 502)
+    db().execute("UPDATE orders SET api_v1=1,client_order_id=? WHERE id=?", (oid or new_id,new_id)); db().commit()
+    o=db().execute("SELECT * FROM orders WHERE id=?", (new_id,)).fetchone()
+    return jsonify(status="success", data=_api_payment_payload(o,gw,oid or new_id).json)
+
+
+@app.route("/api/verify.php", methods=["GET"])
+def api_legacy_verify():
+    oid=request.args.get("order_id", "").strip(); gw=api_gateway()
+    if not gw: return _api_error("invalid API key",401)
+    o=db().execute("SELECT * FROM orders WHERE gateway_id=? AND (id=? OR client_order_id=? OR pt_order=?) ORDER BY created_ts DESC LIMIT 1",(gw["id"],oid,oid,oid)).fetchone()
+    if not o: return jsonify(status="pending",data=None)
+    paid=o["status"]=="paid"
+    return jsonify(status="success" if paid else ("expired" if o["expires_ts"]<time.time() else "pending"), data=({"order_id":o["client_order_id"] or o["id"],"amount":money(o["amount"]),"utr":o["utr"],"payment_time":ist(o["paid_ts"])} if paid else None))
+
+@app.route("/pay/<oid>/qr.png")
+def api_qr_png(oid): return _api_qr(oid, True)
+
+@app.route("/pay/<oid>/qr.svg")
+def api_qr_svg(oid): return _api_qr(oid, False)
 
 @app.route("/api/v1/orders", methods=["POST"])
 def api_create():
@@ -455,7 +588,33 @@ def admin_settings():
     return render_template("admin_set.html", s=s_, last_backup=ist(lb) if lb else "never", csrf=session["csrf"])
 
 @app.route("/health")
-def health(): return "ok"
+def health():
+    return jsonify(status="ok", service="payment-gateway", time=int(time.time()))
+
+# Optional outbound keepalive. Set KEEPALIVE_URL to the public /health URL and
+# KEEPALIVE_INTERVAL=240. This is best-effort only; Render may still spin down
+# Free services and an external uptime monitor is more reliable.
+_keepalive_started = False
+
+def _keepalive_loop():
+    url = (os.environ.get("KEEPALIVE_URL", "").strip() or (os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/") + "/health" if os.environ.get("RENDER_EXTERNAL_URL") else ""))
+    interval = max(120, int(os.environ.get("KEEPALIVE_INTERVAL", "240")))
+    while True:
+        try:
+            if url:
+                req = urllib.request.Request(url, headers={"User-Agent": "RG-Gateway-KeepAlive/1.0"})
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    app.logger.info("Keepalive ping: HTTP %s", response.status)
+        except Exception as exc:
+            app.logger.warning("Keepalive ping failed: %s", str(exc)[:160])
+        time.sleep(interval)
+
+def start_keepalive():
+    global _keepalive_started
+    if _keepalive_started: return
+    _keepalive_started = True
+    if os.environ.get("KEEPALIVE_URL", "").strip() or os.environ.get("RENDER_EXTERNAL_URL", "").strip():
+        threading.Thread(target=_keepalive_loop, daemon=True, name="keepalive").start()
 
 def _order_query(csv=False):
     gsel = request.args.get("gateway", type=int); ssel = request.args.get("status", "")
@@ -496,6 +655,7 @@ def admin_backup_now():
     ok, msg = backup.run_backup(); flash(msg, "ok" if ok else "warn"); return redirect("/admin/settings")
 
 worker.start()
+start_keepalive()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)

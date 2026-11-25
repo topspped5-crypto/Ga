@@ -62,7 +62,11 @@ def init_db():
     def addcol(t, col, typ):
         if col not in [r[1] for r in c.execute(f"PRAGMA table_info({t})")]:
             c.execute(f"ALTER TABLE {t} ADD COLUMN {col} {typ}")
-    addcol("gateways", "mid", "TEXT"); addcol("gateways", "key_enc", "TEXT")
+    addcol("gateways", "mid", "TEXT"); addcol("gateways", "key_enc", "TEXT"); addcol("gateways", "webhook_secret", "TEXT")
+    addcol("orders", "api_v1", "INTEGER DEFAULT 0"); addcol("orders", "client_order_id", "TEXT")
+    for row in c.execute("SELECT id FROM gateways WHERE webhook_secret IS NULL OR webhook_secret=''").fetchall():
+        c.execute("UPDATE gateways SET webhook_secret=? WHERE id=?", (secrets.token_urlsafe(32), row[0]))
+    c.execute("CREATE INDEX IF NOT EXISTS ix_orders_client ON orders(gateway_id, client_order_id)")
     addcol("gateways", "last_uid", "INTEGER DEFAULT 0"); addcol("orders", "cancel_url", "TEXT"); addcol("orders", "qr_data", "TEXT"); addcol("orders", "pt_order", "TEXT")
     # one-time: force the 5-minute QR expiry even if an older value was saved
     if not c.execute("SELECT 1 FROM settings WHERE k='mig_expiry5'").fetchone():
