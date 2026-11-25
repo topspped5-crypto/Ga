@@ -1,16 +1,27 @@
-PAY GATEWAY - AUTHENTICATION UPDATE
-
-Changes:
-- Rebuilt merchant Login and Create Account screens with responsive professional styling.
-- Rebuilt the Admin Login screen to match the new authentication design.
-- Kept existing dashboard, gateways, payments, API, database schema, and other features unchanged.
-- Added safer account-registration error handling with server-side logging.
-- Admin login now clears the previous user session and creates a fresh CSRF token.
-- Added a branded fallback page for uncaught HTTP 500 errors.
+Gateway Admin + API Compatibility Update
+=========================================
+Added:
+- Admin > Gateway System with separate Paytm and FamPay setup forms.
+- Paytm setup fields: Shop Name, UPI ID, Merchant ID (MID).
+- FamPay setup fields: Shop Name, UPI ID, Gmail, 16-character Gmail App Password.
+- Connection tests, on/off, token regeneration, delete controls and API token display.
+- API compatibility endpoints: /api/v1/payment/create, /api/v1/payment/status/{id},
+  /api/v1/payment/verify.
+- Authorization: Bearer token support.
+- QR SVG and PNG endpoints.
+- Updated user-facing /docs page and API_DOCUMENTATION.txt.
+- Existing /api/v1/orders endpoints remain available.
 
 Important:
-The screenshot only shows a generic HTTP 500 response. The exact original server exception cannot be identified from that screenshot alone.
-After deploying, if account creation still fails, open Render -> your service -> Logs and check the traceback at the time of the failed request. The server log is required to identify any remaining deployment/database-specific cause.
+- paytm.py and fampay.py are preserved byte-for-byte from the uploaded archive.
+- payments.py, worker.py and core.py are preserved byte-for-byte.
+- Existing merchant gateway setup and legacy API endpoints remain available.
+- Set Admin > Settings > Public base URL to the deployed HTTPS URL.
+- Use the platform API token only on your bot/server, never in public client code.
 
-Validation:
-Python syntax compilation passed for the edited Python files. A full Flask request test could not be run in this environment because Flask is not installed here.
+Compatibility note:
+- This implementation's webhook signature is the existing X-Signature HMAC-SHA256
+  of the raw body using the API token. It is not the timestamp + separate webhook-secret
+  signature described in the supplied reference text.
+- The documented idempotent retry behavior for repeated custom order_id values is not
+  implemented by the original database schema; generate a unique order_id per payment.

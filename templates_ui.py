@@ -161,7 +161,8 @@ def _layout(items, who, av, sub, tail):
 USER_ITEMS = [("dash", "/dashboard", "Dashboard", "home"), ("gateways", "/gateways", "Gateways", "grid"),
               ("orders", "/orders", "Orders", "list"), ("docs", "/docs", "API docs", "book"), ("account", "/account", "Account", "user")]
 ADMIN_ITEMS = [("home", "/admin", "Overview", "chart"), ("users", "/admin/users", "Users", "users"),
-               ("gws", "/admin/gateways", "Gateways &amp; Orders", "grid"), ("set", "/admin/settings", "Settings &amp; Backup", "gear")]
+               ("platform_gw", "/admin/platform-gateways", "Gateway System", "grid"),
+               ("gws", "/admin/gateways", "All User Gateways", "list"), ("set", "/admin/settings", "Settings &amp; Backup", "gear")]
 LAYOUT_USER = _layout(USER_ITEMS, "{{ g.user.username }}", "{{ g.user.username[:1]|upper }}", "Merchant account", '<a class="out" href="/logout">{{ ico(\'logout\') }}<span>Logout</span></a>')
 LAYOUT_ADMIN = _layout(ADMIN_ITEMS, "Administrator", "A", "Full access", '<a class="out" href="/admin/logout">{{ ico(\'logout\') }}<span>Logout</span></a>')
 
@@ -291,24 +292,32 @@ ORDERS = page('layout_user.html', 'orders', 'Orders', """
 <div style="text-align:right">{% if more %}<a class="btn sm gray" href="?page={{page+1}}&gateway={{gsel or ''}}&status={{ssel}}">Next →</a>{% endif %}</div></div></div>""")
 
 DOCS = page('layout_user.html', 'docs', 'API docs', """
-<div class="pagehead"><h1>API docs</h1></div><div class="card">
-<p class="mut">Base URL: <b>{{base}}</b> &nbsp; Auth: header <code>X-API-Key: YOUR_GATEWAY_KEY</code></p>
-<h3>1. Create order</h3>
-<pre>POST {{base}}/api/v1/orders
+<div class="pagehead"><h1>API Documentation</h1></div><div class="card">
+<p class="mut">Base URL: <b>{{base}}</b> · Auth: <code>X-API-Key: YOUR_API_TOKEN</code> or <code>Authorization: Bearer YOUR_API_TOKEN</code>. Keep the token on your server only.</p>
+<h3>1. Create payment</h3><pre>POST {{base}}/api/v1/payment/create
+Content-Type: application/json
+X-API-Key: YOUR_API_TOKEN
+
+{"amount":99,"order_id":"ORDER10001","gateway":"paytm","webhook_url":"https://your-domain.com/hook"}</pre>
+<p class="mut">Use gateway=fampay with a FamPay token. Gateway must match the token. FamPay may return a unique paise-adjusted amount; collect the returned amount exactly.</p>
+<h3>1b. Simple GET / hosted checkout compatibility</h3><pre>GET {{base}}/api/create_order.php?amount=99&amp;order_id=ORDER10001&amp;gateway=paytm&amp;api_key=YOUR_API_TOKEN
+GET {{base}}/checkout.php?amount=99&amp;order_id=ORDER10001&amp;gateway=paytm&amp;api_key=YOUR_API_TOKEN</pre>
+<h3>2. Check status</h3><pre>GET {{base}}/api/v1/payment/status/ORDER10001
+X-API-Key: YOUR_API_TOKEN
+
+POST {{base}}/api/v1/payment/verify
+X-API-Key: YOUR_API_TOKEN
+
+GET {{base}}/api/verify.php?order_id=ORDER10001&amp;api_key=YOUR_API_TOKEN
 Content-Type: application/json
 
-{"amount": 100, "ref": "your-order-id",
- "webhook_url": "https://yoursite.com/hook",
- "redirect_url": "https://yoursite.com/thanks",
- "cancel_url": "https://yoursite.com/cart"}</pre>
-<p class="mut">Only <code>amount</code> is required. Response:</p>
-<pre>{"order_id":"...","payment_url":"{{base}}/pay/...","amount":"100.00","expires_in":300}</pre>
-<p class="mut">Send the user to <code>payment_url</code>. Orders expire in 5 minutes. For FamPay the amount can be a few paise higher so each pending payment is unique; use the returned <code>amount</code>. The Back button on the payment page goes to <code>cancel_url</code> (or <code>redirect_url</code>).</p>
-<h3>2. Check status</h3>
-<pre>GET {{base}}/api/v1/orders/ORDER_ID   →  {"status":"pending|paid|expired", ...}</pre>
-<h3>3. Webhook</h3>
-<p class="mut">When paid, we POST JSON <code>{event, order_id, ref, amount, status, utr, paid_at}</code> to your webhook_url with header <code>X-Signature</code> = HMAC-SHA256 of the raw body using your API key. Always verify it, and confirm the order with the status API.</p></div>""")
-
+{"order_id":"ORDER10001"}</pre>
+<p class="mut">Only SUCCESS / paid means verified. Do not deliver for pending, failed or expired.</p>
+<h3>3. Existing bot compatibility</h3><pre>POST {{base}}/api/v1/orders
+GET {{base}}/api/v1/orders/ORDER_ID</pre>
+<p class="mut">The existing orders API remains enabled. It returns order_id, payment_url, amount and expires_in.</p>
+<h3>4. Webhook</h3><p class="mut">Set an HTTPS webhook URL when creating a payment. This installation sends JSON with event, order_id, ref, amount, status, utr and paid_at. It signs the raw body with HMAC-SHA256 using your API token and sends the hex digest in X-Signature. Verify it server-side and confirm status before delivery.</p>
+<h3>5. Security</h3><ul><li>Never expose the API token in browser JavaScript or mobile apps.</li><li>Call this API from your server only.</li><li>Never trust screenshots, redirects or user-entered UTR values.</li><li>Deliver only after verified success.</li></ul></div>""")
 ACCOUNT = page('layout_user.html', 'account', 'Account', """
 <div class="pagehead"><h1>Account</h1></div>
 <div class="card"><table><tr><th>Username</th><td>{{u.username}}</td></tr><tr><th>Phone</th><td>{{u.phone}}</td></tr><tr><th>Gmail</th><td>{{u.email}}</td></tr><tr><th>Joined</th><td>{{u.created}}</td></tr></table></div>
@@ -423,6 +432,20 @@ ADMIN_SET = page('layout_admin.html', 'set', 'Settings', """
 <form method="post" action="/admin/restore" enctype="multipart/form-data" class="row" style="margin-top:16px"><input type="hidden" name="csrf" value="{{csrf}}">
 <input type="file" name="file" required><button class="btn gray" style="flex:0">Restore</button></form></div>""")
 
+ADMIN_PLATFORM_GW = page('layout_admin.html', 'platform_gw', 'Gateway System', """
+<div class="pagehead"><h1>Platform Gateway System</h1><p class="mut">Configure your platform merchant accounts.</p></div>
+<div class="card"><h2>Add Paytm Gateway</h2><form method="post" action="/admin/platform-gateway/add"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="type" value="paytm">
+<label>Shop Name</label><input name="name" required maxlength="40"><label>Paytm UPI ID</label><input name="upi_id" required placeholder="name@paytm"><label>Merchant ID (MID)</label><input name="mid" required><button class="btn">Save &amp; test Paytm</button></form></div>
+<div class="card"><h2>Add FamPay Gateway</h2><form method="post" action="/admin/platform-gateway/add"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="type" value="fampay">
+<label>Shop Name</label><input name="name" required maxlength="40"><label>FamPay UPI ID</label><input name="upi_id" required><label>Gmail linked with FamPay</label><input name="gmail" type="email" required><label>Gmail App Password (16 characters)</label><input name="app_password" type="password" required autocomplete="new-password"><button class="btn">Save &amp; test FamPay</button></form></div>
+<div class="card"><h2>Your platform gateways</h2><div class="scroll"><table><tr><th>Type</th><th>Shop</th><th>UPI ID</th><th>Account</th><th>Status / Error</th><th>API Token</th><th>Actions</th></tr>
+{% for x in gws %}<tr><td>{{x.type}}</td><td>{{x.name}}</td><td>{{x.upi_id}}</td><td>{{x.gmail or x.mid}}</td><td>{{'Active' if x.active else 'Off'}} · {{x.last_error or '-'}}</td><td><code>{{x.api_key}}</code></td><td>
+<form method="post" action="/admin/platform-gateway/{{x.id}}/toggle"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn sm gray">{{'Turn off' if x.active else 'Turn on'}}</button></form>
+<form method="post" action="/admin/platform-gateway/{{x.id}}/regen"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn sm gray">Regenerate token</button></form>
+<form method="post" action="/admin/platform-gateway/{{x.id}}/test"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn sm gray">Test connection</button></form>
+<form method="post" action="/admin/platform-gateway/{{x.id}}/delete" onsubmit="return confirm('Delete gateway?')"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn sm red">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="7">No platform gateways configured.</td></tr>{% endfor %}</table></div><p class="mut">Use the API token in your bot's server-side configuration. Regenerating it invalidates the previous token.</p></div>""")
+
 ERROR_PAGE = """{% extends 'base.html' %}{% block title %}Temporary error · Pay Gateway{% endblock %}
 {% block body %}<main class="auth-shell"><section class="auth glow center">
 <div class="auth-brand">""" + MARK + """<span class="logo">Pay Gateway</span></div>
@@ -435,4 +458,4 @@ ERROR_PAGE = """{% extends 'base.html' %}{% block title %}Temporary error · Pay
 TEMPLATES = {"base.html": BASE, "icons.html": ICONS, "layout_user.html": LAYOUT_USER, "layout_admin.html": LAYOUT_ADMIN,
   "auth.html": AUTH, "admin_login.html": ADMIN_LOGIN, "error.html": ERROR_PAGE, "dash.html": DASH, "gateways.html": GATEWAYS, "gateway_new.html": GATEWAY_NEW,
   "gateway.html": GATEWAY, "orders.html": ORDERS, "docs.html": DOCS, "account.html": ACCOUNT, "checkout.html": CHECKOUT,
-  "admin_home.html": ADMIN_HOME, "admin_users.html": ADMIN_USERS, "admin_gw.html": ADMIN_GW, "admin_set.html": ADMIN_SET}
+  "admin_home.html": ADMIN_HOME, "admin_users.html": ADMIN_USERS, "admin_gw.html": ADMIN_GW, "admin_set.html": ADMIN_SET, "admin_platform_gw.html": ADMIN_PLATFORM_GW}

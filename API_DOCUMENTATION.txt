@@ -1,0 +1,65 @@
+PAYMENT GATEWAY API DOCUMENTATION
+Base URL: Set your deployed website URL in Admin > Settings > Public base URL.
+Authentication: X-API-Key: YOUR_API_TOKEN or Authorization: Bearer YOUR_API_TOKEN.
+Use the API token generated under Admin > Gateway System. Keep it server-side only.
+
+1) CREATE PAYMENT
+POST /api/v1/payment/create
+Content-Type: application/json
+X-API-Key: YOUR_API_TOKEN
+
+{
+  "amount": 99,
+  "order_id": "ORDER10001",
+  "gateway": "paytm",
+  "webhook_url": "https://your-domain.com/payment-webhook",
+  "redirect_url": "https://your-domain.com/paid"
+}
+For FamPay, set gateway to "fampay". The gateway must match the gateway configured for the API token.
+FamPay adds a unique paise adjustment to separate simultaneous pending payments. Always show and collect
+the exact amount returned in the response.
+
+Response fields include:
+success, order_id, pay_id, status, amount, currency, gateway, transaction_id,
+payment_url, qr_url, qr_png_url, upi_uri, expires_at.
+QR SVG and PNG URLs are available at /pay/{internal_order_id}/qr.svg and /qr.png.
+
+1b) SIMPLE GET COMPATIBILITY
+GET /api/create_order.php?amount=99&order_id=ORDER10001&gateway=paytm&api_key=YOUR_API_TOKEN
+Returns {"status":"success","data":{...payment fields...}}.
+Hosted checkout redirect:
+GET /checkout.php?amount=99&order_id=ORDER10001&gateway=paytm&api_key=YOUR_API_TOKEN
+
+2) CHECK STATUS
+GET /api/v1/payment/status/{order_id}
+GET /api/verify.php?order_id=ORDER10001&api_key=YOUR_API_TOKEN
+Header: X-API-Key: YOUR_API_TOKEN
+
+3) VERIFY
+POST /api/v1/payment/verify
+Content-Type: application/json
+X-API-Key: YOUR_API_TOKEN
+{"order_id":"ORDER10001"}
+
+Only status SUCCESS means verified. Do not deliver for PENDING, FAILED or EXPIRED.
+
+4) EXISTING BOT COMPATIBILITY
+The pre-existing routes remain available:
+POST /api/v1/orders
+GET /api/v1/orders/{internal_order_id}
+They return the existing order/payment URL data so integrations already using this method can continue.
+Use the new base URL and the API token from Admin > Gateway System.
+
+5) WEBHOOK
+Pass webhook_url during payment creation. This installation sends JSON fields:
+event, order_id, ref, amount, status, utr, paid_at.
+Header X-Signature contains the hexadecimal HMAC-SHA256 digest of the raw JSON body,
+using the API token as the signing key. Compare signatures in constant time and confirm payment
+status with the status endpoint before delivering. Make delivery idempotent.
+
+6) SECURITY
+- Never expose API tokens in browser JavaScript or mobile apps.
+- Call the API from your server only.
+- Never trust redirects, screenshots or user-entered UTR values.
+- Deliver only after verified SUCCESS.
+- Use HTTPS for the website and webhook.
